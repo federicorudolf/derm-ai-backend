@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get allowed origins from environment or use localhost for development
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost").split(",")
 
 app.add_middleware(
     CORSMiddleware,
