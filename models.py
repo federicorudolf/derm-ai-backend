@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -26,7 +26,9 @@ class Picture(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    body_part_location = Column(String, nullable=False)
+    body_part_location = Column(String, nullable=True)
+    image_path = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -40,6 +42,9 @@ class Diagnosis(Base):
     picture_id = Column(Integer, ForeignKey("pictures.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     diagnosis = Column(String, nullable=False)
+    malignant_probability = Column(Float, nullable=False)
+    benign_probability = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
     date_of_diagnosis = Column(Date, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -1,10 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from models import Base
-from database import engine
+from database import engine, test_connection
 from routes import auth, classification
+import logging
 
-Base.metadata.create_all(bind=engine)
+logger = logging.getLogger(__name__)
+
+# Test database connection on startup
+if test_connection():
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created/verified successfully")
+else:
+    logger.error("Failed to connect to database on startup")
 
 app = FastAPI(title="DermAI Backend", version="1.0.0")
 
@@ -14,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get allowed origins from environment or use localhost for development
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost:5173").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +32,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["authentication"])
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(classification.router, prefix="/api", tags=["classification"])
 
 @app.get("/")
@@ -33,4 +41,8 @@ def read_root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    db_status = test_connection()
+    return {
+        "status": "healthy" if db_status else "unhealthy",
+        "database": "connected" if db_status else "disconnected"
+    }

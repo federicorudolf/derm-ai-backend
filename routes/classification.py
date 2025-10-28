@@ -1,5 +1,6 @@
 import os
 import io
+import uuid
 import torch
 import torch.nn as nn
 import timm
@@ -10,14 +11,25 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from datetime import date
+import logging
 from auth import get_current_user
-from models import User as UserModel
+from models import User as UserModel, Picture, Diagnosis
+from database import get_db
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 # Model configuration
 MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
 IMG_SIZE = 448
+UPLOAD_DIR = "./uploads"
+
+# Create upload directory if it doesn't exist
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Device setup
 if torch.backends.mps.is_available():
@@ -94,10 +106,27 @@ def predict_image(img_tensor):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
+def save_uploaded_image(file_content: bytes, filename: str) -> str:
+    """Save uploaded image to disk and return the file path"""
+    try:
+        # Generate unique filename to avoid conflicts
+        file_extension = os.path.splitext(filename)[1].lower()
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        
+        # Save file to disk
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+        
+        return file_path
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error saving image: {str(e)}")
+
 @router.post("/classify")
 async def classify_mole(
     file: UploadFile = File(...),
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Classify a mole image as benign or malignant
@@ -118,22 +147,75 @@ async def classify_mole(
         # Read image file
         image_bytes = await file.read()
         
-        # Preprocess image
+        # Save image to disk
+        image_path = save_uploaded_image(image_bytes, file.filename)
+        
+        # Preprocess image for prediction
         img_tensor = preprocess_image(io.BytesIO(image_bytes))
         
         # Run prediction
         result = predict_image(img_tensor)
         
+        # Save picture and diagnosis records to database with proper error handling
+        try:
+            logger.info(f"Saving classification for user {current_user.id}")
+            
+            # Save picture record to database
+            picture = Picture(
+                user_id=current_user.id,
+                image_path=image_path,
+                filename=file.filename
+            )
+            db.add(picture)
+            db.flush()  # Flush to get the picture ID without committing
+            logger.info(f"Picture record created with ID: {picture.id}")
+            
+            # Save diagnosis record to database
+            diagnosis = Diagnosis(
+                picture_id=picture.id,
+                user_id=current_user.id,
+                diagnosis=result["classification"],
+                malignant_probability=result["probability"]["malignant"],
+                benign_probability=result["probability"]["benign"],
+                confidence=result["confidence"],
+                date_of_diagnosis=date.today()
+            )
+            db.add(diagnosis)
+            db.commit()  # Commit both records together
+            db.refresh(picture)
+            db.refresh(diagnosis)
+            logger.info(f"Diagnosis record created with ID: {diagnosis.id}")
+            
+        except Exception as db_error:
+            # Rollback the transaction if database operations fail
+            logger.error(f"Database error during classification save: {db_error}")
+            db.rollback()
+            # Clean up saved image file
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Database error during classification save: {str(db_error)}"
+            )
+        
         return JSONResponse(content={
             "success": True,
             "filename": file.filename,
             "user_id": current_user.id,
+            "picture_id": picture.id,
+            "diagnosis_id": diagnosis.id,
             "result": result
         })
         
     except HTTPException:
         raise
     except Exception as e:
+        # Clean up saved image if any operation fails
+        if 'image_path' in locals() and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except OSError:
+                pass  # Ignore cleanup errors
         raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
 
 @router.get("/model-info")

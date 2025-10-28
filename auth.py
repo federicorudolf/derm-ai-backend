@@ -36,12 +36,19 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 def authenticate_user(db: Session, email: str, password: str):
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return False
+        if not verify_password(password, user.password_hash):
+            return False
+        return user
+    except Exception as e:
+        # Log the error and return False to indicate authentication failure
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Database error during authentication: {e}")
         return False
-    if not verify_password(password, user.password_hash):
-        return False
-    return user
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -57,7 +64,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except JWTError:
         raise credentials_exception
     
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        raise credentials_exception
-    return user
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            raise credentials_exception
+        return user
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Database error during user lookup: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service temporarily unavailable"
+        )
