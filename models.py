@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Float, Boolean, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -20,6 +20,7 @@ class User(Base):
     
     pictures = relationship("Picture", back_populates="user")
     diagnoses = relationship("Diagnosis", back_populates="user")
+    sessions = relationship("Session", back_populates="user")
 
 class Picture(Base):
     __tablename__ = "pictures"
@@ -51,3 +52,18 @@ class Diagnosis(Base):
     
     picture = relationship("Picture", back_populates="diagnoses")
     user = relationship("User", back_populates="diagnoses")
+
+class Session(Base):
+    __tablename__ = "sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash = Column(String, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    user_agent = Column(Text)
+    ip_address = Column(String)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("User", back_populates="sessions")

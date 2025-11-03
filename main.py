@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from models import Base
 from database import engine, test_connection
-from routes import auth, classification
+from routes import auth, classification, images
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,12 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(classification.router, prefix="/api", tags=["classification"])
+app.include_router(images.router, prefix="/api", tags=["images"])
+
+# Mount static files directory for serving uploaded images
+uploads_dir = "./uploads"
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 @app.get("/")
 def read_root():

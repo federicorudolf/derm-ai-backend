@@ -1,0 +1,8 @@
+.env
+__pycache__/
+uploads/
+checkpoints/
+*.db
+*.jpg
+*.csv
+*.webp

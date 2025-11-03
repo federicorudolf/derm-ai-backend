@@ -107,7 +107,7 @@ def predict_image(img_tensor):
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
 def save_uploaded_image(file_content: bytes, filename: str) -> str:
-    """Save uploaded image to disk and return the file path"""
+    """Save uploaded image to disk and return the URL path for frontend access"""
     try:
         # Generate unique filename to avoid conflicts
         file_extension = os.path.splitext(filename)[1].lower()
@@ -118,7 +118,10 @@ def save_uploaded_image(file_content: bytes, filename: str) -> str:
         with open(file_path, "wb") as f:
             f.write(file_content)
         
-        return file_path
+        # Return URL path that can be accessed via HTTP (relative to API base)
+        # This will be served by FastAPI static file mounting
+        url_path = f"/uploads/{unique_filename}"
+        return url_path
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving image: {str(e)}")
 
@@ -147,8 +150,11 @@ async def classify_mole(
         # Read image file
         image_bytes = await file.read()
         
-        # Save image to disk
-        image_path = save_uploaded_image(image_bytes, file.filename)
+        # Save image to disk - returns URL path for frontend access
+        image_url_path = save_uploaded_image(image_bytes, file.filename)
+        # Get the actual file system path for cleanup if needed
+        unique_filename = os.path.basename(image_url_path)
+        file_system_path = os.path.join(UPLOAD_DIR, unique_filename)
         
         # Preprocess image for prediction
         img_tensor = preprocess_image(io.BytesIO(image_bytes))
@@ -160,10 +166,10 @@ async def classify_mole(
         try:
             logger.info(f"Saving classification for user {current_user.id}")
             
-            # Save picture record to database
+            # Save picture record to database with URL path
             picture = Picture(
                 user_id=current_user.id,
-                image_path=image_path,
+                image_path=image_url_path,  # Store URL path for frontend access
                 filename=file.filename
             )
             db.add(picture)
@@ -190,9 +196,9 @@ async def classify_mole(
             # Rollback the transaction if database operations fail
             logger.error(f"Database error during classification save: {db_error}")
             db.rollback()
-            # Clean up saved image file
-            if os.path.exists(image_path):
-                os.remove(image_path)
+            # Clean up saved image file using file system path
+            if os.path.exists(file_system_path):
+                os.remove(file_system_path)
             raise HTTPException(
                 status_code=500, 
                 detail=f"Database error during classification save: {str(db_error)}"
@@ -201,6 +207,7 @@ async def classify_mole(
         return JSONResponse(content={
             "success": True,
             "filename": file.filename,
+            "image_url": image_url_path,  # URL path for frontend to display the image
             "user_id": current_user.id,
             "picture_id": picture.id,
             "diagnosis_id": diagnosis.id,
@@ -211,9 +218,9 @@ async def classify_mole(
         raise
     except Exception as e:
         # Clean up saved image if any operation fails
-        if 'image_path' in locals() and os.path.exists(image_path):
+        if 'file_system_path' in locals() and os.path.exists(file_system_path):
             try:
-                os.remove(image_path)
+                os.remove(file_system_path)
             except OSError:
                 pass  # Ignore cleanup errors
         raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
