@@ -9,10 +9,11 @@ import cv2
 from PIL import Image
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import date
+from typing import Optional
 import logging
 from auth import get_current_user
 from models import User as UserModel, Picture, Diagnosis
@@ -24,7 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Model configuration
-MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
+PRO_MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
+CLINICAL_MODEL_PATH = "./checkpoints/derm_densenet121_best_clinical.pth"
 IMG_SIZE = 448
 UPLOAD_DIR = "./uploads"
 
@@ -47,24 +49,41 @@ val_tfms = A.Compose([
     ToTensorV2()
 ])
 
-# Load model once at startup
-model = None
+# Load models - cache both models
+pro_model = None
+clinical_model = None
 
-def load_model():
-    global model
-    if model is None:
-        try:
-            # Create the same model architecture as in training
-            model = timm.create_model('densenet121', pretrained=True, num_classes=1)
-            model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-            model.to(DEVICE)
-            model.eval()
-            model = model.to(torch.float32)
-            print(f"Model loaded successfully on {DEVICE}")
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            raise HTTPException(status_code=500, detail="Failed to load AI model")
-    return model
+def load_model(is_pro: bool = False):
+    global pro_model, clinical_model
+    
+    if is_pro:
+        if pro_model is None:
+            try:
+                # Create the same model architecture as in training
+                pro_model = timm.create_model('densenet121', pretrained=True, num_classes=1)
+                pro_model.load_state_dict(torch.load(PRO_MODEL_PATH, map_location=DEVICE))
+                pro_model.to(DEVICE)
+                pro_model.eval()
+                pro_model = pro_model.to(torch.float32)
+                print(f"Pro model loaded successfully on {DEVICE}")
+            except Exception as e:
+                print(f"Error loading pro model: {e}")
+                raise HTTPException(status_code=500, detail="Failed to load AI pro model")
+        return pro_model
+    else:
+        if clinical_model is None:
+            try:
+                # Create the same model architecture as in training
+                clinical_model = timm.create_model('densenet121', pretrained=True, num_classes=1)
+                clinical_model.load_state_dict(torch.load(CLINICAL_MODEL_PATH, map_location=DEVICE))
+                clinical_model.to(DEVICE)
+                clinical_model.eval()
+                clinical_model = clinical_model.to(torch.float32)
+                print(f"Clinical model loaded successfully on {DEVICE}")
+            except Exception as e:
+                print(f"Error loading clinical model: {e}")
+                raise HTTPException(status_code=500, detail="Failed to load AI clinical model")
+        return clinical_model
 
 def preprocess_image(image_bytes: bytes):
     """Preprocess uploaded image for model inference"""
@@ -82,10 +101,10 @@ def preprocess_image(image_bytes: bytes):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
 
-def predict_image(img_tensor):
+def predict_image(img_tensor, is_pro: bool = False):
     """Run inference on preprocessed image"""
     try:
-        model = load_model()
+        model = load_model(is_pro=is_pro)
         
         with torch.inference_mode():
             # Use autocast for inference
@@ -128,6 +147,8 @@ def save_uploaded_image(file_content: bytes, filename: str) -> str:
 @router.post("/classify")
 async def classify_mole(
     file: UploadFile = File(...),
+    skinTone: Optional[str] = Form(None),
+    bodyPart: Optional[str] = Form(None),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -135,6 +156,8 @@ async def classify_mole(
     Classify a mole image as benign or malignant
     
     - **file**: Image file (JPEG, PNG, etc.)
+    - **skinTone**: Optional skin tone classification
+    - **bodyPart**: Optional body part location
     - Returns classification result with probability scores
     - Requires authentication
     """
@@ -159,18 +182,20 @@ async def classify_mole(
         # Preprocess image for prediction
         img_tensor = preprocess_image(io.BytesIO(image_bytes))
         
-        # Run prediction
-        result = predict_image(img_tensor)
+        # Run prediction with user's pro status
+        result = predict_image(img_tensor, is_pro=current_user.is_pro)
         
         # Save picture and diagnosis records to database with proper error handling
         try:
             logger.info(f"Saving classification for user {current_user.id}")
             
-            # Save picture record to database with URL path
+            # Save picture record to database with URL path, skin tone, and body part
             picture = Picture(
                 user_id=current_user.id,
                 image_path=image_url_path,  # Store URL path for frontend access
-                filename=file.filename
+                filename=file.filename,
+                skin_tone=skinTone,
+                body_part_location=bodyPart
             )
             db.add(picture)
             db.flush()  # Flush to get the picture ID without committing
@@ -208,6 +233,8 @@ async def classify_mole(
             "success": True,
             "filename": file.filename,
             "image_url": image_url_path,  # URL path for frontend to display the image
+            "skin_tone": skinTone,
+            "body_part": bodyPart,
             "user_id": current_user.id,
             "picture_id": picture.id,
             "diagnosis_id": diagnosis.id,
@@ -227,12 +254,23 @@ async def classify_mole(
 
 @router.get("/model-info")
 def get_model_info():
-    """Get information about the loaded model"""
+    """Get information about the loaded models"""
     try:
-        model_exists = os.path.exists(MODEL_PATH)
+        pro_model_exists = os.path.exists(PRO_MODEL_PATH)
+        clinical_model_exists = os.path.exists(CLINICAL_MODEL_PATH)
         return {
-            "model_path": MODEL_PATH,
-            "model_exists": model_exists,
+            "models": {
+                "pro": {
+                    "path": PRO_MODEL_PATH,
+                    "exists": pro_model_exists,
+                    "description": "High-accuracy model for pro users"
+                },
+                "clinical": {
+                    "path": CLINICAL_MODEL_PATH,
+                    "exists": clinical_model_exists,
+                    "description": "Clinical-grade model for regular users"
+                }
+            },
             "device": str(DEVICE),
             "image_size": IMG_SIZE,
             "model_architecture": "DenseNet-121"

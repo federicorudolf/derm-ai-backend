@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Optional
 import math
@@ -29,10 +29,15 @@ async def get_user_images(
         PictureModel.user_id == current_user.id
     ).scalar()
     
-    # Get paginated pictures
+    # Get paginated pictures with diagnoses eagerly loaded
+    # Sort by created_at descending to show most recent pictures first
     pictures = db.query(PictureModel).filter(
         PictureModel.user_id == current_user.id
-    ).order_by(PictureModel.created_at.desc()).offset(offset).limit(size).all()
+    ).options(
+        joinedload(PictureModel.diagnoses)
+    ).order_by(
+        PictureModel.created_at.desc()
+    ).offset(offset).limit(size).all()
     
     # Calculate total pages
     total_pages = math.ceil(total / size) if total > 0 else 0

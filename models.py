@@ -15,6 +15,7 @@ class User(Base):
     bio = Column(String)
     d_o_b = Column(Date)
     country = Column(String)
+    is_pro = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -28,6 +29,7 @@ class Picture(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     body_part_location = Column(String, nullable=True)
+    skin_tone = Column(String, nullable=True)
     image_path = Column(String, nullable=False)
     filename = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

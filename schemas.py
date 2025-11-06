@@ -31,14 +31,31 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
+class Diagnosis(BaseModel):
+    id: int
+    picture_id: int
+    user_id: int
+    diagnosis: str
+    malignant_probability: float
+    benign_probability: float
+    confidence: float
+    date_of_diagnosis: date
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class Picture(BaseModel):
     id: int
     user_id: int
     body_part_location: Optional[str] = None
+    skin_tone: Optional[str] = None
     image_path: str
     filename: str
     created_at: datetime
     updated_at: datetime
+    diagnoses: List[Diagnosis] = []
 
     class Config:
         from_attributes = True
