@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get allowed origins from environment or use localhost for development
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost:5173").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost:5173,https://derm-ai-black.vercel.app").split(",")
 
 app.add_middleware(
     CORSMiddleware,
