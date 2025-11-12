@@ -43,8 +43,8 @@ ENV PYTHONUNBUFFERED=1
 # Expose port
 EXPOSE 8000
 
-# Extended health check for model loading time
-HEALTHCHECK --interval=30s --timeout=60s --start-period=120s --retries=3 \
+# Extended health check for model loading time - increased timeouts for Railway
+HEALTHCHECK --interval=60s --timeout=120s --start-period=300s --retries=5 \
   CMD curl -f http://localhost:8000/health || exit 1
 
 # Run with optimized settings for CPU inference

@@ -62,26 +62,41 @@ executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)  # Single worker
 def load_model_cached(model_path: str, model_type: str):
     """Cached model loading with CPU optimizations"""
     try:
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+        logger.info(f"Loading {model_type} model from {model_path}")
         model = timm.create_model('densenet121', pretrained=False, num_classes=1)
-        state_dict = torch.load(model_path, map_location=DEVICE)
+        
+        # Load with error handling
+        state_dict = torch.load(model_path, map_location=DEVICE, weights_only=True)
         model.load_state_dict(state_dict)
         model.to(DEVICE)
         model.eval()
         
-        # CPU optimizations
-        model = torch.jit.optimize_for_inference(torch.jit.script(model))
-        print(f"{model_type} model loaded and optimized on {DEVICE}")
+        # CPU optimizations with error handling
+        try:
+            model = torch.jit.optimize_for_inference(torch.jit.script(model))
+            logger.info(f"{model_type} model loaded and JIT optimized on {DEVICE}")
+        except Exception as jit_error:
+            logger.warning(f"JIT optimization failed for {model_type} model: {jit_error}")
+            logger.info(f"{model_type} model loaded without JIT optimization on {DEVICE}")
+            
         return model
     except Exception as e:
-        print(f"Error loading {model_type} model: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to load AI {model_type} model")
+        logger.error(f"Error loading {model_type} model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load AI {model_type} model: {str(e)}")
 
 def get_model(is_pro: bool = False):
     """Get cached model instance"""
-    if is_pro:
-        return load_model_cached(PRO_MODEL_PATH, "pro")
-    else:
-        return load_model_cached(CLINICAL_MODEL_PATH, "clinical")
+    try:
+        if is_pro:
+            return load_model_cached(PRO_MODEL_PATH, "pro")
+        else:
+            return load_model_cached(CLINICAL_MODEL_PATH, "clinical")
+    except Exception as e:
+        logger.error(f"Failed to get model (is_pro={is_pro}): {e}")
+        raise
 
 def preprocess_image(image_bytes: bytes):
     """Optimized image preprocessing for CPU inference"""

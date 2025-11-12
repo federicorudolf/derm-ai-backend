@@ -27,16 +27,22 @@ async def lifespan(app: FastAPI):
         from routes.classification import get_model
         logger.info("Preloading AI models...")
         
-        # Load both models
+        # Load both models with timeout handling
         pro_model = get_model(is_pro=True)
-        clinical_model = get_model(is_pro=False)
-        
         logger.info("✓ Pro model preloaded")
+        
+        clinical_model = get_model(is_pro=False)
         logger.info("✓ Clinical model preloaded")
+        
         logger.info("All models ready for inference")
+        
+        # Set global flag to indicate models are preloaded
+        app.state.models_preloaded = True
         
     except Exception as e:
         logger.error(f"Error preloading models: {e}")
+        logger.info("App will continue with on-demand model loading")
+        app.state.models_preloaded = False
     
     yield
     
@@ -74,10 +80,63 @@ app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 def read_root():
     return {"message": "Welcome to DermAI Backend API"}
 
+@app.get("/ready")
+def readiness_check():
+    """Readiness check for deployment orchestration"""
+    try:
+        # Check database connection
+        db_status = test_connection()
+        
+        # Check if we can import classification module
+        from routes.classification import PRO_MODEL_PATH, CLINICAL_MODEL_PATH
+        import os
+        
+        pro_model_exists = os.path.exists(PRO_MODEL_PATH)
+        clinical_model_exists = os.path.exists(CLINICAL_MODEL_PATH)
+        
+        ready = db_status and pro_model_exists and clinical_model_exists
+        
+        return {
+            "ready": ready,
+            "database": db_status,
+            "pro_model": pro_model_exists,
+            "clinical_model": clinical_model_exists
+        }
+    except Exception as e:
+        return {
+            "ready": False,
+            "error": str(e)
+        }
+
 @app.get("/health")
 def health_check():
-    db_status = test_connection()
-    return {
-        "status": "healthy" if db_status else "unhealthy",
-        "database": "connected" if db_status else "disconnected"
-    }
+    try:
+        db_status = test_connection()
+        
+        # Check if models exist (don't load them during health check)
+        from routes.classification import PRO_MODEL_PATH, CLINICAL_MODEL_PATH
+        import os
+        
+        pro_model_exists = os.path.exists(PRO_MODEL_PATH)
+        clinical_model_exists = os.path.exists(CLINICAL_MODEL_PATH)
+        
+        models_status = "ready" if (pro_model_exists and clinical_model_exists) else "missing"
+        models_preloaded = getattr(app.state, 'models_preloaded', False)
+        
+        # Consider the app healthy if models exist, even if not preloaded yet
+        overall_status = "healthy" if db_status and models_status == "ready" else "degraded"
+        
+        return {
+            "status": overall_status,
+            "database": "connected" if db_status else "disconnected",
+            "models": models_status,
+            "models_preloaded": models_preloaded,
+            "timestamp": str(__import__('datetime').datetime.now())
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": str(__import__('datetime').datetime.now())
+        }
