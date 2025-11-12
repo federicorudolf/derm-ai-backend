@@ -6,9 +6,31 @@ from database import engine, test_connection
 from routes import auth, classification, images
 import logging
 import os
+import asyncio
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
+
+async def preload_models_background(app: FastAPI):
+    """Background task to preload models after app startup"""
+    try:
+        from routes.classification import get_model
+        logger.info("Preloading AI models...")
+        
+        # Load both models
+        pro_model = get_model(is_pro=True)
+        logger.info("✓ Pro model preloaded")
+        
+        clinical_model = get_model(is_pro=False)
+        logger.info("✓ Clinical model preloaded")
+        
+        logger.info("All models ready for inference")
+        app.state.models_preloaded = True
+        
+    except Exception as e:
+        logger.error(f"Error preloading models: {e}")
+        logger.info("App will continue with on-demand model loading")
+        app.state.models_preloaded = False
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,27 +44,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("Failed to connect to database on startup")
     
-    # Preload models to avoid cold start delays
-    try:
-        from routes.classification import get_model
-        logger.info("Preloading AI models...")
-        
-        # Load both models with timeout handling
-        pro_model = get_model(is_pro=True)
-        logger.info("✓ Pro model preloaded")
-        
-        clinical_model = get_model(is_pro=False)
-        logger.info("✓ Clinical model preloaded")
-        
-        logger.info("All models ready for inference")
-        
-        # Set global flag to indicate models are preloaded
-        app.state.models_preloaded = True
-        
-    except Exception as e:
-        logger.error(f"Error preloading models: {e}")
-        logger.info("App will continue with on-demand model loading")
-        app.state.models_preloaded = False
+    # Initialize model preloading status
+    app.state.models_preloaded = False
+    
+    # Start model preloading in background
+    asyncio.create_task(preload_models_background(app))
     
     yield
     
@@ -123,7 +129,7 @@ def health_check():
         models_status = "ready" if (pro_model_exists and clinical_model_exists) else "missing"
         models_preloaded = getattr(app.state, 'models_preloaded', False)
         
-        # Consider the app healthy if models exist, even if not preloaded yet
+        # App is healthy if database works and models exist (even if still loading)
         overall_status = "healthy" if db_status and models_status == "ready" else "degraded"
         
         return {
