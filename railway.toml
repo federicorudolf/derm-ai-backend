@@ -1,0 +1,21 @@
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+# CPU optimizations for inference
+[variables]
+TORCH_NUM_THREADS = "2"
+OMP_NUM_THREADS = "2" 
+MKL_NUM_THREADS = "2"
+NUMBA_NUM_THREADS = "2"
+
+# Memory optimizations
+MALLOC_ARENA_MAX = "2"
+PYTHONUNBUFFERED = "1"
+
+# Model cache settings
+TORCH_JIT_LOG_LEVEL = "INFO"

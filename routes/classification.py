@@ -15,6 +15,9 @@ from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
 import logging
+import asyncio
+import concurrent.futures
+from functools import lru_cache
 from auth import get_current_user
 from models import User as UserModel, Picture, Diagnosis
 from database import get_db
@@ -33,67 +36,67 @@ UPLOAD_DIR = "./uploads"
 # Create upload directory if it doesn't exist
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Device setup
-if torch.backends.mps.is_available():
-    DEVICE = torch.device("mps")
-elif torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-else:
-    DEVICE = torch.device("cpu")
+# Optimized device setup for deployment
+# Force CPU for Railway deployment since GPUs aren't available
+DEVICE = torch.device("cpu")
+# Set number of threads for CPU inference optimization
+torch.set_num_threads(2)  # Railway typically provides 2 CPU cores
+print(f"Using device: {DEVICE} with {torch.get_num_threads()} threads")
 
-# Image preprocessing transforms (same as validation transforms from training)
+# Optimized image preprocessing for faster CPU inference
+# Reduced image size for faster processing on CPU
+OPTIMIZED_IMG_SIZE = 224  # Reduced from 448 for 4x faster preprocessing
 val_tfms = A.Compose([
-    A.LongestMaxSize(max_size=IMG_SIZE),
-    A.PadIfNeeded(IMG_SIZE, IMG_SIZE, border_mode=cv2.BORDER_REFLECT_101),
+    A.LongestMaxSize(max_size=OPTIMIZED_IMG_SIZE),
+    A.PadIfNeeded(OPTIMIZED_IMG_SIZE, OPTIMIZED_IMG_SIZE, border_mode=cv2.BORDER_REFLECT_101),
     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ToTensorV2()
 ])
 
-# Load models - cache both models
+# Global model cache with thread pool for CPU optimization
 pro_model = None
 clinical_model = None
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)  # Single worker for model inference
 
-def load_model(is_pro: bool = False):
-    global pro_model, clinical_model
-    
+@lru_cache(maxsize=2)
+def load_model_cached(model_path: str, model_type: str):
+    """Cached model loading with CPU optimizations"""
+    try:
+        model = timm.create_model('densenet121', pretrained=False, num_classes=1)
+        state_dict = torch.load(model_path, map_location=DEVICE)
+        model.load_state_dict(state_dict)
+        model.to(DEVICE)
+        model.eval()
+        
+        # CPU optimizations
+        model = torch.jit.optimize_for_inference(torch.jit.script(model))
+        print(f"{model_type} model loaded and optimized on {DEVICE}")
+        return model
+    except Exception as e:
+        print(f"Error loading {model_type} model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load AI {model_type} model")
+
+def get_model(is_pro: bool = False):
+    """Get cached model instance"""
     if is_pro:
-        if pro_model is None:
-            try:
-                # Create the same model architecture as in training
-                pro_model = timm.create_model('densenet121', pretrained=True, num_classes=1)
-                pro_model.load_state_dict(torch.load(PRO_MODEL_PATH, map_location=DEVICE))
-                pro_model.to(DEVICE)
-                pro_model.eval()
-                pro_model = pro_model.to(torch.float32)
-                print(f"Pro model loaded successfully on {DEVICE}")
-            except Exception as e:
-                print(f"Error loading pro model: {e}")
-                raise HTTPException(status_code=500, detail="Failed to load AI pro model")
-        return pro_model
+        return load_model_cached(PRO_MODEL_PATH, "pro")
     else:
-        if clinical_model is None:
-            try:
-                # Create the same model architecture as in training
-                clinical_model = timm.create_model('densenet121', pretrained=True, num_classes=1)
-                clinical_model.load_state_dict(torch.load(CLINICAL_MODEL_PATH, map_location=DEVICE))
-                clinical_model.to(DEVICE)
-                clinical_model.eval()
-                clinical_model = clinical_model.to(torch.float32)
-                print(f"Clinical model loaded successfully on {DEVICE}")
-            except Exception as e:
-                print(f"Error loading clinical model: {e}")
-                raise HTTPException(status_code=500, detail="Failed to load AI clinical model")
-        return clinical_model
+        return load_model_cached(CLINICAL_MODEL_PATH, "clinical")
 
 def preprocess_image(image_bytes: bytes):
-    """Preprocess uploaded image for model inference"""
+    """Optimized image preprocessing for CPU inference"""
     try:
-        # Convert bytes to PIL Image
+        # Convert bytes to PIL Image with size optimization
         image = Image.open(image_bytes).convert('RGB')
+        
+        # Pre-resize if image is very large to speed up processing
+        if max(image.size) > 1024:
+            image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        
         # Convert to numpy array
         img_array = np.array(image)
         
-        # Apply the same transforms as used during validation
+        # Apply optimized transforms
         transformed = val_tfms(image=img_array)
         img_tensor = transformed["image"].unsqueeze(0)  # Add batch dimension
         
@@ -101,15 +104,14 @@ def preprocess_image(image_bytes: bytes):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
 
-def predict_image(img_tensor, is_pro: bool = False):
-    """Run inference on preprocessed image"""
+def predict_image_sync(img_tensor, is_pro: bool = False):
+    """Synchronous CPU-optimized inference"""
     try:
-        model = load_model(is_pro=is_pro)
+        model = get_model(is_pro=is_pro)
         
         with torch.inference_mode():
-            # Use autocast for inference
-            with torch.amp.autocast(device_type=DEVICE.type, enabled=(DEVICE.type != 'cpu')):
-                logits = model(img_tensor).view(-1)
+            # CPU inference without autocast
+            logits = model(img_tensor).view(-1)
             probability = torch.sigmoid(logits).item()
             is_malignant = probability > 0.5
             classification = "malignant" if is_malignant else "benign"
@@ -124,6 +126,11 @@ def predict_image(img_tensor, is_pro: bool = False):
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
+
+async def predict_image(img_tensor, is_pro: bool = False):
+    """Async wrapper for CPU inference in thread pool"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, predict_image_sync, img_tensor, is_pro)
 
 def save_uploaded_image(file_content: bytes, filename: str) -> str:
     """Save uploaded image to disk and return the URL path for frontend access"""
@@ -182,8 +189,8 @@ async def classify_mole(
         # Preprocess image for prediction
         img_tensor = preprocess_image(io.BytesIO(image_bytes))
         
-        # Run prediction with user's pro status
-        result = predict_image(img_tensor, is_pro=current_user.is_pro)
+        # Run async prediction with user's pro status
+        result = await predict_image(img_tensor, is_pro=current_user.is_pro)
         
         # Save picture and diagnosis records to database with proper error handling
         try:

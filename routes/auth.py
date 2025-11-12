@@ -19,8 +19,8 @@ from auth import (
 
 router = APIRouter()
 
-@router.post("/signup", response_model=User)
-def register_user(user: UserCreate, db: Session = Depends(get_db)):
+@router.post("/signup", response_model=TokenWithSession)
+def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     db_user = db.query(UserModel).filter(UserModel.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -37,7 +37,33 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    return db_user
+    
+    # Create access token and session for the newly registered user
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": db_user.email}, expires_delta=access_token_expires
+    )
+    
+    # Create session
+    expires_at = datetime.utcnow() + access_token_expires
+    user_agent = request.headers.get("user-agent")
+    ip_address = request.client.host if request.client else None
+    
+    session = create_session(
+        db=db,
+        user_id=db_user.id,
+        token=access_token,
+        expires_at=expires_at,
+        user_agent=user_agent,
+        ip_address=ip_address
+    )
+    
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "session_id": session.id,
+        "expires_at": expires_at
+    }
 
 @router.post("/login", response_model=TokenWithSession)
 def login_user(user_credentials: UserLogin, request: Request, db: Session = Depends(get_db)):

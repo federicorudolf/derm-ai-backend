@@ -6,17 +6,44 @@ from database import engine, test_connection
 from routes import auth, classification, images
 import logging
 import os
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
-# Test database connection on startup
-if test_connection():
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified successfully")
-else:
-    logger.error("Failed to connect to database on startup")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting up application...")
+    
+    # Test database connection on startup
+    if test_connection():
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified successfully")
+    else:
+        logger.error("Failed to connect to database on startup")
+    
+    # Preload models to avoid cold start delays
+    try:
+        from routes.classification import get_model
+        logger.info("Preloading AI models...")
+        
+        # Load both models
+        pro_model = get_model(is_pro=True)
+        clinical_model = get_model(is_pro=False)
+        
+        logger.info("✓ Pro model preloaded")
+        logger.info("✓ Clinical model preloaded")
+        logger.info("All models ready for inference")
+        
+    except Exception as e:
+        logger.error(f"Error preloading models: {e}")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down application...")
 
-app = FastAPI(title="DermAI Backend", version="1.0.0")
+app = FastAPI(title="DermAI Backend", version="1.0.0", lifespan=lifespan)
 
 import os
 from dotenv import load_dotenv
