@@ -11,8 +11,20 @@ from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
-async def preload_models_background(app: FastAPI):
-    """Background task to preload models after app startup"""
+# Global flag for readiness probe
+models_ready = False
+
+async def ping_db():
+    """Test database connection"""
+    return test_connection()
+
+async def ping_db_quick():
+    """Quick database ping for readiness check"""
+    return test_connection()
+
+async def preload_models():
+    """Preload AI models synchronously for startup"""
+    global models_ready
     try:
         from routes.classification import get_model
         logger.info("Preloading AI models...")
@@ -25,37 +37,28 @@ async def preload_models_background(app: FastAPI):
         logger.info("✓ Clinical model preloaded")
         
         logger.info("All models ready for inference")
-        app.state.models_preloaded = True
+        models_ready = True
         
     except Exception as e:
         logger.error(f"Error preloading models: {e}")
         logger.info("App will continue with on-demand model loading")
-        app.state.models_preloaded = False
+        models_ready = False
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
+app = FastAPI(title="DermAI Backend", version="1.0.0")
+
+@app.on_event("startup")
+async def startup():
     logger.info("Starting up application...")
     
-    # Test database connection on startup
-    if test_connection():
+    # Test database connection and create tables
+    if await ping_db():
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created/verified successfully")
     else:
         logger.error("Failed to connect to database on startup")
     
-    # Initialize model preloading status
-    app.state.models_preloaded = False
-    
-    # Start model preloading in background
-    asyncio.create_task(preload_models_background(app))
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down application...")
-
-app = FastAPI(title="DermAI Backend", version="1.0.0", lifespan=lifespan)
+    # Preload models
+    await preload_models()
 
 import os
 from dotenv import load_dotenv
@@ -87,32 +90,10 @@ def read_root():
     return {"message": "Welcome to DermAI Backend API"}
 
 @app.get("/ready")
-def readiness_check():
-    """Readiness check for deployment orchestration"""
-    try:
-        # Check database connection
-        db_status = test_connection()
-        
-        # Check if we can import classification module
-        from routes.classification import PRO_MODEL_PATH, CLINICAL_MODEL_PATH
-        import os
-        
-        pro_model_exists = os.path.exists(PRO_MODEL_PATH)
-        clinical_model_exists = os.path.exists(CLINICAL_MODEL_PATH)
-        
-        ready = db_status and pro_model_exists and clinical_model_exists
-        
-        return {
-            "ready": ready,
-            "database": db_status,
-            "pro_model": pro_model_exists,
-            "clinical_model": clinical_model_exists
-        }
-    except Exception as e:
-        return {
-            "ready": False,
-            "error": str(e)
-        }
+async def ready():
+    """Readiness check - returns 200 only after DB + models are loaded"""
+    ok = await ping_db_quick()
+    return {"ok": ok and models_ready}
 
 @app.get("/health")
 def health_check():
