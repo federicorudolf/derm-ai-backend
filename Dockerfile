@@ -40,12 +40,12 @@ ENV NUMBA_NUM_THREADS=2
 ENV MALLOC_ARENA_MAX=2
 ENV PYTHONUNBUFFERED=1
 
-# Expose port
-EXPOSE 8000
+# Expose port - Railway will override this
+EXPOSE $PORT
 
 # Extended health check for model loading time - increased timeouts for Railway
 HEALTHCHECK --interval=60s --timeout=120s --start-period=300s --retries=5 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 # Run with optimized settings for CPU inference
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
