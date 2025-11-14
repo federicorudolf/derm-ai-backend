@@ -69,7 +69,7 @@ def startup():
 load_dotenv()
 allowed_origins = [o.strip() for o in os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost:5173,https://derm-ai-black.vercel.app"
+    "http://localhost:3000,http://127.0.0.1:3000,capacitor://localhost,http://localhost:5173,https://derm-ai-black.vercel.app,https://dermai.com.ar"
 ).split(",") if o.strip()]
 
 app.add_middleware(
