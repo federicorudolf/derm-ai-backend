@@ -140,3 +140,35 @@ def logout_all_sessions(current_user: UserModel = Depends(get_current_user), db:
     """Logout all sessions for current user"""
     count = invalidate_user_sessions(db, current_user.id)
     return {"message": f"Successfully logged out from {count} sessions"}
+
+@router.delete("/users/me")
+def delete_user_account(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Delete the current user's account and all associated data"""
+    try:
+        # First, invalidate all user sessions
+        invalidate_user_sessions(db, current_user.id)
+        
+        # Delete all related data in order (due to foreign key constraints)
+        # Delete diagnoses first
+        from models import Diagnosis, Picture
+        db.query(Diagnosis).filter(Diagnosis.user_id == current_user.id).delete()
+        
+        # Delete pictures
+        db.query(Picture).filter(Picture.user_id == current_user.id).delete()
+        
+        # Delete sessions (should already be invalidated but let's remove them)
+        from models import Session as SessionModel
+        db.query(SessionModel).filter(SessionModel.user_id == current_user.id).delete()
+        
+        # Finally delete the user
+        db.delete(current_user)
+        db.commit()
+        
+        return {"message": "Account successfully deleted"}
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete account"
+        )
