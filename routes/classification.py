@@ -29,12 +29,18 @@ router = APIRouter()
 
 # Model configuration
 PRO_MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
-CLINICAL_MODEL_PATH = "./checkpoints/derm_densenet121_best_clinical.pth"
+CLINICAL_MODEL_PATH = "./checkpoints/derm_densenet121_best_clinical_nov.pth"
 IMG_SIZE = 448
-UPLOAD_DIR = "./uploads"
+# Use environment variable for upload directory (Railway volume mount)
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/uploads" if os.getenv("ENVIRONMENT") == "production" else "./uploads")
 
 # Create upload directory if it doesn't exist
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    logger.info(f"Upload directory configured: {UPLOAD_DIR}")
+except Exception as e:
+    logger.error(f"Failed to create upload directory {UPLOAD_DIR}: {e}")
+    raise RuntimeError(f"Cannot access upload directory: {e}")
 
 # Optimized device setup for deployment
 # Force CPU for Railway deployment since GPUs aren't available
@@ -148,22 +154,50 @@ async def predict_image(img_tensor, is_pro: bool = False):
     return await loop.run_in_executor(executor, predict_image_sync, img_tensor, is_pro)
 
 def save_uploaded_image(file_content: bytes, filename: str) -> str:
-    """Save uploaded image to disk and return the URL path for frontend access"""
+    """Save uploaded image to disk with compression and return the URL path for frontend access"""
     try:
-        # Generate unique filename to avoid conflicts
-        file_extension = os.path.splitext(filename)[1].lower()
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        # Generate unique filename to avoid conflicts - always save as JPG for compression
+        unique_filename = f"{uuid.uuid4()}.jpg"
         file_path = os.path.join(UPLOAD_DIR, unique_filename)
         
-        # Save file to disk
-        with open(file_path, "wb") as f:
-            f.write(file_content)
+        logger.info(f"Attempting to save compressed image to: {file_path}")
+        logger.info(f"Upload directory exists: {os.path.exists(UPLOAD_DIR)}")
+        logger.info(f"Upload directory writable: {os.access(UPLOAD_DIR, os.W_OK)}")
+        
+        # Check if directory is writable
+        if not os.access(UPLOAD_DIR, os.W_OK):
+            raise PermissionError(f"Upload directory {UPLOAD_DIR} is not writable")
+        
+        # Load and compress image for storage
+        original_image = Image.open(io.BytesIO(file_content)).convert('RGB')
+        original_size = len(file_content)
+        
+        # Resize for storage (maintain aspect ratio, max 800px on longest side)
+        max_size = 800
+        if max(original_image.size) > max_size:
+            ratio = max_size / max(original_image.size)
+            new_size = tuple(int(dim * ratio) for dim in original_image.size)
+            original_image = original_image.resize(new_size, Image.Resampling.LANCZOS)
+            logger.info(f"Resized image from {Image.open(io.BytesIO(file_content)).size} to {new_size}")
+        
+        # Save with compression
+        original_image.save(file_path, 'JPEG', quality=85, optimize=True)
+        
+        # Verify file was saved
+        if not os.path.exists(file_path):
+            raise OSError(f"Failed to save file to {file_path}")
+        
+        compressed_size = os.path.getsize(file_path)
+        compression_ratio = (1 - compressed_size / original_size) * 100
+        logger.info(f"Successfully saved compressed image: {unique_filename}")
+        logger.info(f"Size reduction: {original_size} → {compressed_size} bytes ({compression_ratio:.1f}% smaller)")
         
         # Return URL path that can be accessed via HTTP (relative to API base)
         # This will be served by FastAPI static file mounting
         url_path = f"/uploads/{unique_filename}"
         return url_path
     except Exception as e:
+        logger.error(f"Error saving image to {UPLOAD_DIR}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error saving image: {str(e)}")
 
 @router.post("/classify")

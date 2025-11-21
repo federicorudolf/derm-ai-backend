@@ -86,7 +86,7 @@ app.include_router(classification.router, prefix="/api", tags=["classification"]
 app.include_router(images.router, prefix="/api", tags=["images"])
 
 # -------- Static uploads --------
-uploads_dir = "./uploads"
+uploads_dir = os.getenv("UPLOAD_DIR", "./uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
