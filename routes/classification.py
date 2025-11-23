@@ -21,6 +21,7 @@ from functools import lru_cache
 from auth import get_current_user
 from models import User as UserModel, Picture, Diagnosis
 from database import get_db
+from services.image_validator import validate_skin_lesion_async
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -226,9 +227,31 @@ async def classify_mole(
         raise HTTPException(status_code=400, detail=f"File must be an image. Supported formats: {', '.join(allowed_extensions)}")
     
     try:
-        # Read image file
         image_bytes = await file.read()
-        
+        validation_result = await validate_skin_lesion_async(image_bytes)
+
+        if not validation_result["valid"]:
+            logger.warning(
+                f"Invalid image rejected for user {current_user.id}: "
+                f"{validation_result.get('detected_content', 'unknown content')}"
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "valid": False,
+                    "reason": validation_result.get("reason", "Image validation failed"),
+                    "detected_content": validation_result.get("detected_content", "Unknown"),
+                    "confidence": validation_result.get("confidence", 0.0),
+                    "is_skin_lesion_probability": validation_result.get("is_skin_lesion_probability", 0.0)
+                }
+            )
+
+        logger.info(
+            f"Image validated successfully for user {current_user.id} "
+            f"(confidence: {validation_result.get('confidence', 0.0):.2%})"
+        )
+
         # Save image to disk - returns URL path for frontend access
         image_url_path = save_uploaded_image(image_bytes, file.filename)
         # Get the actual file system path for cleanup if needed

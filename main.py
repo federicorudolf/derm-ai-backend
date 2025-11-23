@@ -32,6 +32,7 @@ def preload_models() -> None:
     global models_ready
     try:
         from routes.classification import get_model
+        from services.image_validator import preload_validator
         logger.info("Preloading AI models...")
 
         get_model(is_pro=True)
@@ -39,6 +40,10 @@ def preload_models() -> None:
 
         get_model(is_pro=False)
         logger.info("✓ Clinical model preloaded")
+
+        # Preload CLIP validator
+        preload_validator()
+        logger.info("✓ CLIP validator preloaded")
 
         logger.info("All models ready for inference")
         models_ready = True
