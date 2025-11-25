@@ -29,9 +29,9 @@ COPY . .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# REMOVED: Don't create appuser, stay as root
+# RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# USER appuser
 
 # Set CPU optimization environment variables
 ENV TORCH_NUM_THREADS=2
@@ -48,5 +48,5 @@ EXPOSE $PORT
 HEALTHCHECK --interval=60s --timeout=120s --start-period=300s --retries=5 \
   CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Single CMD at the end - this runs your entrypoint script
+# Single CMD at the end
 CMD ["./entrypoint.sh"]
