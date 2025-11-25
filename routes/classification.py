@@ -33,7 +33,7 @@ PRO_MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
 CLINICAL_MODEL_PATH = "./checkpoints/derm_densenet121_best_clinical_nov.pth"
 IMG_SIZE = 448
 # Use environment variable for upload directory (Railway volume mount)
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/uploads" if os.getenv("ENVIRONMENT") == "production" else "./uploads")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/uploads/images" if os.getenv("ENVIRONMENT") == "production" else "./uploads/images")
 
 # Create upload directory if it doesn't exist
 try:
@@ -195,7 +195,7 @@ def save_uploaded_image(file_content: bytes, filename: str) -> str:
         
         # Return URL path that can be accessed via HTTP (relative to API base)
         # This will be served by FastAPI static file mounting
-        url_path = f"/uploads/{unique_filename}"
+        url_path = f"/uploads/images/{unique_filename}"
         return url_path
     except Exception as e:
         logger.error(f"Error saving image to {UPLOAD_DIR}: {str(e)}")

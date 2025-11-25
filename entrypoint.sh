@@ -1,17 +1,11 @@
 #!/bin/sh
-# Check if /uploads exists and try to make it writable
+# Try to create a subdirectory that we can write to
 if [ -d "/uploads" ]; then
-    echo "📁 /uploads exists, checking permissions..."
-    if [ ! -w "/uploads" ]; then
-        echo "⚠️  /uploads not writable, attempting fix..."
-        chmod 777 /uploads 2>/dev/null || echo "❌ Cannot change permissions (running as non-root)"
-    else
-        echo "✅ /uploads is writable"
-    fi
-else
-    echo "❌ /uploads directory not found!"
+    echo "📁 Creating writable subdirectory..."
+    mkdir -p /uploads/images 2>/dev/null || true
+    # Even if we can't chmod the parent, we might own the subdirectory
+    chmod 777 /uploads/images 2>/dev/null || true
 fi
 
 # Start the application
-echo "🚀 Starting DermAI Backend..."
 exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1

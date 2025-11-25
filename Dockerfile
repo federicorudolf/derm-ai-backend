@@ -25,9 +25,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Copy entrypoint and make it executable
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
-CMD ["./entrypoint.sh"]
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -48,5 +48,5 @@ EXPOSE $PORT
 HEALTHCHECK --interval=60s --timeout=120s --start-period=300s --retries=5 \
   CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Run with optimized settings for CPU inference
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+# Single CMD at the end - this runs your entrypoint script
+CMD ["./entrypoint.sh"]
