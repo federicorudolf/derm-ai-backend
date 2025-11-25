@@ -70,6 +70,11 @@ def startup():
     # Preload models
     preload_models()
 
+# Mount static files - this MUST be after app creation
+uploads_dir = os.getenv("UPLOAD_DIR", "./uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads/images", StaticFiles(directory="/uploads/images"), name="uploads")
+
 # -------- CORS --------
 load_dotenv()
 allowed_origins = [o.strip() for o in os.getenv(
@@ -89,11 +94,6 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(classification.router, prefix="/api", tags=["classification"])
 app.include_router(images.router, prefix="/api", tags=["images"])
-
-# -------- Static uploads --------
-uploads_dir = os.getenv("UPLOAD_DIR", "./uploads")
-os.makedirs(uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 # -------- Basic routes --------
 @app.get("/")
@@ -125,6 +125,16 @@ def health_check(response: Response):
         models_status = "ready" if (pro_model_exists and clinical_model_exists) else "missing"
         models_preloaded = bool(getattr(app.state, "models_preloaded", False))
 
+        # Upload directory debug info
+        upload_debug = {
+            "upload_dir": UPLOAD_DIR,
+            "exists": os.path.exists("/uploads/images"),
+            "writable": os.access("/uploads/images", os.W_OK) if os.path.exists("/uploads/images") else False,
+            "files_count": len(os.listdir("/uploads/images")) if os.path.exists("/uploads/images") else 0,
+            "volume_mounted": os.path.ismount("/uploads"),
+            "sample_files": os.listdir("/uploads/images")[:5] if os.path.exists("/uploads/images") else []
+        }
+
         overall_ok = db_status and (models_status == "ready")
         response.status_code = status.HTTP_200_OK if overall_ok else status.HTTP_206_PARTIAL_CONTENT
 
@@ -133,6 +143,7 @@ def health_check(response: Response):
             "database": "connected" if db_status else "disconnected",
             "models": models_status,
             "models_preloaded": models_preloaded,
+            "uploads": upload_debug,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
