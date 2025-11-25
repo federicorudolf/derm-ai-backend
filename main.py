@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from models import Base
 from database import engine, test_connection
 from routes import auth, classification, images
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +72,20 @@ def startup():
     preload_models()
 
 # Mount static files - this MUST be after app creation
-uploads_dir = os.getenv("UPLOAD_DIR", "./uploads")
-os.makedirs(uploads_dir, exist_ok=True)
-app.mount("/uploads/images", StaticFiles(directory="/uploads/images"), name="uploads")
+if os.environ.get("RAILWAY_ENVIRONMENT"):
+    # Production (Railway)
+    UPLOAD_DIR = "/uploads/images"
+else:
+    # Local development
+    UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "images")
+
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+
+# Only mount if directory exists
+if os.path.exists(UPLOAD_DIR):
+    app.mount("/uploads/images", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+else:
+    logger.warning(f"Upload directory {UPLOAD_DIR} not found, static file serving disabled")
 
 # -------- CORS --------
 load_dotenv()
@@ -128,11 +140,11 @@ def health_check(response: Response):
         # Upload directory debug info
         upload_debug = {
             "upload_dir": UPLOAD_DIR,
-            "exists": os.path.exists("/uploads/images"),
-            "writable": os.access("/uploads/images", os.W_OK) if os.path.exists("/uploads/images") else False,
-            "files_count": len(os.listdir("/uploads/images")) if os.path.exists("/uploads/images") else 0,
+            "exists": os.path.exists(UPLOAD_DIR),
+            "writable": os.access(UPLOAD_DIR, os.W_OK) if os.path.exists(UPLOAD_DIR) else False,
+            "files_count": len(os.listdir(UPLOAD_DIR)) if os.path.exists(UPLOAD_DIR) else 0,
             "volume_mounted": os.path.ismount("/uploads"),
-            "sample_files": os.listdir("/uploads/images")[:5] if os.path.exists("/uploads/images") else []
+            "sample_files": os.listdir(UPLOAD_DIR)[:5] if os.path.exists(UPLOAD_DIR) else []
         }
 
         overall_ok = db_status and (models_status == "ready")
