@@ -23,16 +23,13 @@ from models import User as UserModel, Picture, Diagnosis
 from database import get_db
 from services.image_validator import validate_skin_lesion_async
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Model configuration
 PRO_MODEL_PATH = "./checkpoints/derm_densenet121_best.pth"
 CLINICAL_MODEL_PATH = "./checkpoints/derm_densenet121_best_clinical_nov.pth"
 IMG_SIZE = 448
-# Use environment variable for upload directory (Railway volume mount)
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/uploads/images" if os.getenv("ENVIRONMENT") == "production" else "./uploads/images")
 
 # Create upload directory if it doesn't exist
@@ -43,11 +40,8 @@ except Exception as e:
     logger.error(f"Failed to create upload directory {UPLOAD_DIR}: {e}")
     raise RuntimeError(f"Cannot access upload directory: {e}")
 
-# Optimized device setup for deployment
-# Force CPU for Railway deployment since GPUs aren't available
 DEVICE = torch.device("cpu")
-# Set number of threads for CPU inference optimization
-torch.set_num_threads(2)  # Railway typically provides 2 CPU cores
+torch.set_num_threads(2)
 print(f"Using device: {DEVICE} with {torch.get_num_threads()} threads")
 
 # Optimized image preprocessing for faster CPU inference

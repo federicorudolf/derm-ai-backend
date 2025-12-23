@@ -5,19 +5,33 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from database import get_db
 from models import User as UserModel
-from schemas import UserCreate, User, Token, UserLogin, TokenWithSession
+from schemas import (
+    UserCreate, User, Token, UserLogin, TokenWithSession,
+    ForgotPasswordRequest, ForgotPasswordResponse,
+    ResetPasswordRequest, ResetPasswordResponse,
+    VerifyResetTokenResponse
+)
 from auth import (
-    authenticate_user, 
-    create_access_token, 
-    get_password_hash, 
+    authenticate_user,
+    create_access_token,
+    get_password_hash,
     ACCESS_TOKEN_EXPIRE_MINUTES,
     get_current_user,
     create_session,
     invalidate_session,
-    invalidate_user_sessions
+    invalidate_user_sessions,
+    generate_reset_token,
+    create_password_reset_token,
+    validate_reset_token,
+    mark_reset_token_as_used,
+    invalidate_all_user_reset_tokens
 )
+from services.email_service import send_password_reset_email
+import logging
+import asyncio
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.post("/signup", response_model=TokenWithSession)
 def register_user(user: UserCreate, request: Request, db: Session = Depends(get_db)):
@@ -145,30 +159,189 @@ def logout_all_sessions(current_user: UserModel = Depends(get_current_user), db:
 def delete_user_account(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     """Delete the current user's account and all associated data"""
     try:
-        # First, invalidate all user sessions
         invalidate_user_sessions(db, current_user.id)
-        
-        # Delete all related data in order (due to foreign key constraints)
-        # Delete diagnoses first
         from models import Diagnosis, Picture
+        pictures = db.query(Picture).filter(Picture.user_id == current_user.id).all()
         db.query(Diagnosis).filter(Diagnosis.user_id == current_user.id).delete()
-        
-        # Delete pictures
         db.query(Picture).filter(Picture.user_id == current_user.id).delete()
-        
-        # Delete sessions (should already be invalidated but let's remove them)
+
         from models import Session as SessionModel
         db.query(SessionModel).filter(SessionModel.user_id == current_user.id).delete()
-        
-        # Finally delete the user
         db.delete(current_user)
         db.commit()
-        
-        return {"message": "Account successfully deleted"}
-    
+
+        import os
+        deleted_files = 0
+        failed_files = 0
+
+        for picture in pictures:
+            try:
+                # Extract filename from URL path (e.g., "/uploads/images/abc123.jpg" -> "abc123.jpg")
+                if picture.image_path:
+                    filename = os.path.basename(picture.image_path)
+                    # Determine upload directory based on environment
+                    if os.environ.get("RAILWAY_ENVIRONMENT"):
+                        upload_dir = "/uploads/images"
+                    else:
+                        upload_dir = os.path.join(os.getcwd(), "uploads", "images")
+
+                    file_path = os.path.join(upload_dir, filename)
+
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        deleted_files += 1
+            except Exception as file_error:
+                # Log but don't fail the entire operation if file deletion fails
+                failed_files += 1
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to delete image file {picture.image_path}: {file_error}")
+
+        return {
+            "message": "Account successfully deleted",
+            "files_deleted": deleted_files,
+            "files_failed": failed_files
+        }
+
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete account"
         )
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(
+    request_data: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Request a password reset email
+
+    Security: Always returns success message even if email doesn't exist
+    to prevent email enumeration attacks
+    """
+    try:
+        # Look up user by email
+        user = db.query(UserModel).filter(UserModel.email == request_data.email).first()
+
+        if user:
+            # Invalidate any existing reset tokens for this user
+            invalidate_all_user_reset_tokens(db, user.id)
+
+            # Generate new reset token
+            reset_token = generate_reset_token()
+
+            # Store hashed token in database
+            create_password_reset_token(db, user.id, reset_token)
+
+            # Send email asynchronously (fire and forget for performance)
+            asyncio.create_task(
+                send_password_reset_email(
+                    recipient_email=user.email,
+                    recipient_name=user.name,
+                    reset_token=reset_token
+                )
+            )
+
+            logger.info(f"Password reset requested for user {user.id}")
+        else:
+            # Log for security monitoring but don't reveal to user
+            logger.info(f"Password reset requested for non-existent email: {request_data.email}")
+
+        # ALWAYS return generic success message (security best practice)
+        return {
+            "message": "Si el correo electrónico existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña."
+        }
+
+    except Exception as e:
+        logger.error(f"Error in forgot_password endpoint: {e}")
+        # Still return generic message even on error
+        return {
+            "message": "Si el correo electrónico existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña."
+        }
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+def reset_password(
+    request_data: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reset password using a valid reset token
+
+    Security features:
+    - Validates token hasn't expired or been used
+    - Invalidates all user sessions after password change
+    - Marks token as used to prevent reuse
+    """
+    # Validate the reset token
+    reset_token = validate_reset_token(db, request_data.token)
+
+    if not reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token de restablecimiento inválido o expirado"
+        )
+
+    try:
+        # Get the user
+        user = db.query(UserModel).filter(UserModel.id == reset_token.user_id).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario no encontrado"
+            )
+
+        # Update password
+        user.password_hash = get_password_hash(request_data.new_password)
+        user.updated_at = datetime.utcnow()
+
+        # Mark reset token as used
+        mark_reset_token_as_used(db, reset_token.id)
+
+        # SECURITY: Invalidate all existing sessions (required by user requirements)
+        invalidated_count = invalidate_user_sessions(db, user.id)
+
+        db.commit()
+
+        logger.info(
+            f"Password reset successful for user {user.id}. "
+            f"Invalidated {invalidated_count} sessions."
+        )
+
+        return {
+            "message": "Contraseña restablecida exitosamente. Por favor inicia sesión con tu nueva contraseña."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error resetting password: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al restablecer la contraseña"
+        )
+
+@router.get("/verify-reset-token", response_model=VerifyResetTokenResponse)
+def verify_reset_token_endpoint(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Optional endpoint to verify if a reset token is valid
+    Useful for frontend to show appropriate UI before password submission
+    """
+    reset_token = validate_reset_token(db, token)
+
+    if reset_token:
+        return {
+            "valid": True,
+            "message": "Token válido"
+        }
+    else:
+        return {
+            "valid": False,
+            "message": "Token inválido o expirado"
+        }

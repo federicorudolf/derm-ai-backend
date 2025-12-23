@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, validator
 from datetime import date, datetime
 from typing import Optional, List
 
@@ -89,3 +89,29 @@ class TokenWithSession(BaseModel):
     token_type: str
     session_id: int
     expires_at: datetime
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+    @validator('new_password')
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
+class ResetPasswordResponse(BaseModel):
+    message: str
+
+class VerifyResetTokenRequest(BaseModel):
+    token: str
+
+class VerifyResetTokenResponse(BaseModel):
+    valid: bool
+    message: str

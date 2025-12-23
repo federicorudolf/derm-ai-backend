@@ -6,9 +6,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session as DBSession
 from database import get_db
-from models import User, Session as SessionModel
+from models import User, Session as SessionModel, PasswordResetToken
 import os
 import hashlib
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +17,7 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -156,6 +158,110 @@ def cleanup_expired_sessions(db: DBSession) -> int:
         count = db.query(SessionModel).filter(
             SessionModel.expires_at <= datetime.utcnow()
         ).update({"is_active": False})
+        db.commit()
+        return count
+    except Exception:
+        return 0
+
+# Password Reset Token Functions
+
+def generate_reset_token() -> str:
+    """Generate a secure random token for password reset (32 bytes = 64 hex chars)"""
+    return secrets.token_urlsafe(32)
+
+def create_password_reset_token(
+    db: DBSession,
+    user_id: int,
+    token: str
+) -> PasswordResetToken:
+    """
+    Create a password reset token record
+
+    Args:
+        db: Database session
+        user_id: User ID
+        token: Plain token (will be hashed before storage)
+
+    Returns:
+        PasswordResetToken model instance
+    """
+    token_hash = create_token_hash(token)
+    expires_at = datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+
+    reset_token = PasswordResetToken(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        is_used=False
+    )
+
+    db.add(reset_token)
+    db.commit()
+    db.refresh(reset_token)
+
+    return reset_token
+
+def validate_reset_token(db: DBSession, token: str) -> Optional[PasswordResetToken]:
+    """
+    Validate a password reset token
+
+    Args:
+        db: Database session
+        token: Plain token to validate
+
+    Returns:
+        PasswordResetToken if valid, None otherwise
+    """
+    token_hash = create_token_hash(token)
+
+    reset_token = db.query(PasswordResetToken).filter(
+        PasswordResetToken.token_hash == token_hash,
+        PasswordResetToken.is_used == False,
+        PasswordResetToken.expires_at > datetime.utcnow()
+    ).first()
+
+    return reset_token
+
+def mark_reset_token_as_used(db: DBSession, token_id: int) -> bool:
+    """Mark a reset token as used to prevent reuse"""
+    try:
+        reset_token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.id == token_id
+        ).first()
+
+        if reset_token:
+            reset_token.is_used = True
+            db.commit()
+            return True
+        return False
+    except Exception:
+        return False
+
+def invalidate_all_user_reset_tokens(db: DBSession, user_id: int) -> int:
+    """
+    Invalidate all reset tokens for a user (for security)
+    Returns count of invalidated tokens
+    """
+    try:
+        count = db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.is_used == False
+        ).update({"is_used": True})
+        db.commit()
+        return count
+    except Exception:
+        return 0
+
+def cleanup_expired_reset_tokens(db: DBSession) -> int:
+    """
+    Clean up expired or used reset tokens
+    Returns count of deleted tokens
+    """
+    try:
+        count = db.query(PasswordResetToken).filter(
+            (PasswordResetToken.expires_at <= datetime.utcnow()) |
+            (PasswordResetToken.is_used == True)
+        ).delete()
         db.commit()
         return count
     except Exception:
