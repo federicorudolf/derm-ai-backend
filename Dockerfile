@@ -17,13 +17,24 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
+COPY constraints.txt .
 
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip
 
+# Force NumPy ABI
+RUN pip install --no-cache-dir numpy==1.26.4
+
 # Install CPU-optimized PyTorch and dependencies
-RUN pip install --no-cache-dir torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir -r requirements.txt
+# Install PyTorch (CPU only)
+RUN pip install --no-cache-dir \
+    torch==2.5.1 \
+    torchvision==0.20.1 \
+    --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir \
+    -r requirements.txt \
+    -c constraints.txt
+
 
 # Copy application code
 COPY . .
