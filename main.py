@@ -7,10 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from dotenv import load_dotenv
+from alembic.config import Config
+from alembic import command
 
 from models import Base
 from database import engine, test_connection
-from routes import auth, classification, images
+from routes import auth, classification, images, moles
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,20 @@ def ping_db() -> bool:
 def ping_db_quick() -> bool:
     """Quick database ping for readiness check"""
     return test_connection()
+
+# -------- Database migrations --------
+def run_migrations() -> None:
+    """Run alembic migrations programmatically"""
+    try:
+        logger.info("Checking for pending migrations...")
+        alembic_cfg = Config("alembic.ini")
+
+        # Run migrations to head (latest version)
+        command.upgrade(alembic_cfg, "head")
+        logger.info("✓ Database migrations completed successfully")
+    except Exception as e:
+        logger.exception(f"Error running migrations: {e}")
+        raise
 
 # -------- Model preload --------
 def preload_models() -> None:
@@ -61,12 +77,18 @@ app = FastAPI(title="DermAI Backend", version="1.0.0")
 def startup():
     logger.info("Starting up application...")
 
-    # DB & tables
-    if ping_db():
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created/verified successfully")
-    else:
+    # DB connection check
+    if not ping_db():
         logger.error("Failed to connect to database on startup")
+        return
+
+    # Run migrations
+    try:
+        run_migrations()
+    except Exception as e:
+        logger.error(f"Failed to run migrations: {e}")
+        # Continue anyway to allow health checks to work
+        pass
 
     # Preload models
     preload_models()
@@ -106,6 +128,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(classification.router, prefix="/api", tags=["classification"])
 app.include_router(images.router, prefix="/api", tags=["images"])
+app.include_router(moles.router, prefix="/api", tags=["moles"])
 
 # -------- Basic routes --------
 @app.get("/")
