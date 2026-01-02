@@ -7,7 +7,7 @@ Base = declarative_base()
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
@@ -18,24 +18,42 @@ class User(Base):
     is_pro = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     pictures = relationship("Picture", back_populates="user")
     diagnoses = relationship("Diagnosis", back_populates="user")
     sessions = relationship("Session", back_populates="user")
+    moles = relationship("Mole", back_populates="user")
+
+class Mole(Base):
+    __tablename__ = "moles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=True)
+    body_part_location = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    is_archived = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="moles")
+    pictures = relationship("Picture", back_populates="mole", order_by="Picture.created_at.desc()")
 
 class Picture(Base):
     __tablename__ = "pictures"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    mole_id = Column(Integer, ForeignKey("moles.id"), nullable=True)
     body_part_location = Column(String, nullable=True)
     skin_tone = Column(String, nullable=True)
     image_path = Column(String, nullable=False)
     filename = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="pictures")
+    mole = relationship("Mole", back_populates="pictures")
     diagnoses = relationship("Diagnosis", back_populates="picture")
 
 class Diagnosis(Base):

@@ -49,6 +49,7 @@ class Diagnosis(BaseModel):
 class Picture(BaseModel):
     id: int
     user_id: int
+    mole_id: Optional[int] = None
     body_part_location: Optional[str] = None
     skin_tone: Optional[str] = None
     image_path: str
@@ -115,3 +116,46 @@ class VerifyResetTokenRequest(BaseModel):
 class VerifyResetTokenResponse(BaseModel):
     valid: bool
     message: str
+
+# Mole schemas
+class MoleBase(BaseModel):
+    name: Optional[str] = None
+    body_part_location: Optional[str] = None
+    notes: Optional[str] = None
+
+class MoleCreate(MoleBase):
+    pass
+
+class MoleUpdate(MoleBase):
+    pass
+
+class Mole(MoleBase):
+    id: int
+    user_id: int
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class MoleWithSummary(Mole):
+    picture_count: int
+    latest_picture: Optional[Picture] = None
+    latest_diagnosis: Optional[Diagnosis] = None
+
+    class Config:
+        from_attributes = True
+
+class MoleDetail(Mole):
+    pictures: List[Picture] = []
+
+    class Config:
+        from_attributes = True
+
+class PaginatedMolesResponse(BaseModel):
+    moles: List[MoleWithSummary]
+    total: int
+    page: int
+    size: int
+    total_pages: int

@@ -19,7 +19,7 @@ import asyncio
 import concurrent.futures
 from functools import lru_cache
 from auth import get_current_user
-from models import User as UserModel, Picture, Diagnosis
+from models import User as UserModel, Picture, Diagnosis, Mole
 from database import get_db
 from services.image_validator import validate_skin_lesion_async
 
@@ -200,15 +200,19 @@ async def classify_mole(
     file: UploadFile = File(...),
     skinTone: Optional[str] = Form(None),
     bodyPart: Optional[str] = Form(None),
+    moleId: Optional[int] = Form(None),
+    moleName: Optional[str] = Form(None),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Classify a mole image as benign or malignant
-    
+
     - **file**: Image file (JPEG, PNG, etc.)
     - **skinTone**: Optional skin tone classification
     - **bodyPart**: Optional body part location
+    - **moleId**: Optional ID of existing mole to add this picture to
+    - **moleName**: Optional name for a new mole (only used if moleId is not provided)
     - Returns classification result with probability scores
     - Requires authentication
     """
@@ -261,10 +265,35 @@ async def classify_mole(
         # Save picture and diagnosis records to database with proper error handling
         try:
             logger.info(f"Saving classification for user {current_user.id}")
-            
+
+            # Handle mole association
+            target_mole_id = None
+            if moleId:
+                # Verify mole exists and belongs to user
+                mole = db.query(Mole).filter(
+                    Mole.id == moleId,
+                    Mole.user_id == current_user.id
+                ).first()
+                if not mole:
+                    raise HTTPException(status_code=404, detail="Mole not found")
+                target_mole_id = moleId
+                logger.info(f"Using existing mole ID: {moleId}")
+            else:
+                # Create new mole
+                new_mole = Mole(
+                    user_id=current_user.id,
+                    name=moleName,
+                    body_part_location=bodyPart
+                )
+                db.add(new_mole)
+                db.flush()
+                target_mole_id = new_mole.id
+                logger.info(f"Created new mole with ID: {new_mole.id}")
+
             # Save picture record to database with URL path, skin tone, and body part
             picture = Picture(
                 user_id=current_user.id,
+                mole_id=target_mole_id,
                 image_path=image_url_path,  # Store URL path for frontend access
                 filename=file.filename,
                 skin_tone=skinTone,
@@ -308,6 +337,7 @@ async def classify_mole(
             "image_url": image_url_path,  # URL path for frontend to display the image
             "skin_tone": skinTone,
             "body_part": bodyPart,
+            "mole_id": target_mole_id,
             "user_id": current_user.id,
             "picture_id": picture.id,
             "diagnosis_id": diagnosis.id,
