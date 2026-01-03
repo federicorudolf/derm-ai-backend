@@ -9,8 +9,9 @@ startCommand = "./deploy_with_migrations.sh"
 
 # CPU optimizations for inference
 [variables]
+RAILWAY_ENVIRONMENT = "true"
 TORCH_NUM_THREADS = "2"
-OMP_NUM_THREADS = "2" 
+OMP_NUM_THREADS = "2"
 MKL_NUM_THREADS = "2"
 NUMBA_NUM_THREADS = "2"
 

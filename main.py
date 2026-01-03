@@ -82,13 +82,17 @@ def startup():
         logger.error("Failed to connect to database on startup")
         return
 
-    # Run migrations
-    try:
-        run_migrations()
-    except Exception as e:
-        logger.error(f"Failed to run migrations: {e}")
-        # Continue anyway to allow health checks to work
-        pass
+    # Skip migrations on Railway - they're already run by deploy_with_migrations.sh
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        logger.info("Railway environment - skipping migrations (already run by deploy script)")
+    else:
+        # Run migrations for local development
+        try:
+            run_migrations()
+        except Exception as e:
+            logger.error(f"Failed to run migrations: {e}")
+            # Continue anyway to allow health checks to work
+            pass
 
     # Preload models
     preload_models()

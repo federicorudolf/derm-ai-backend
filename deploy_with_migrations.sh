@@ -64,4 +64,4 @@ echo ""
 echo "========================================="
 echo "Starting Application"
 echo "========================================="
-exec uvicorn main:app --host 0.0.0.0
+exec uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1
