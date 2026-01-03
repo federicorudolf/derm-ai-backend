@@ -39,6 +39,9 @@ RUN pip install --no-cache-dir \
 # Copy application code
 COPY . .
 
+# Preload CLIP model during build to avoid downloading during startup
+RUN python preload_models.py
+
 # Copy entrypoint and make it executable
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
