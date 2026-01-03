@@ -5,6 +5,7 @@ builder = "dockerfile"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
+startCommand = "alembic upgrade head && python app.py"
 
 # CPU optimizations for inference
 [variables]
