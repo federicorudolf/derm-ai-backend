@@ -64,4 +64,4 @@ echo ""
 echo "========================================="
 echo "Starting Application"
 echo "========================================="
-exec python3 app.py
+exec uvicorn main:app --host 0.0.0.0
